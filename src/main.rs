@@ -1,11 +1,13 @@
 extern crate failure;
 extern crate regex;
 extern crate reqwest;
+extern crate sequoia;
+extern crate rand;
 #[macro_use]
 extern crate structopt;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use failure::{Fail, Fallible};
@@ -14,28 +16,47 @@ use regex::{Match, Regex};
 use reqwest::{get, Url};
 use sequoia::core::Context;
 use sequoia::openpgp::parse::Parse;
-use sequoia::openpgp::TPK;
+use sequoia::openpgp::{TPK, armor};
 use sequoia::store::Store;
 use structopt::StructOpt;
 
 use crate::remailer::Remailer;
+use crate::utils::IMatch;
+use std::fs::File;
+use std::{fs, io};
+use rand::seq::SliceRandom;
+use sequoia::openpgp::crypto::Password;
+use sequoia::openpgp::serialize::stream::{Message, EncryptionMode, Encryptor, LiteralWriter};
+use sequoia::openpgp::constants::DataFormat;
+use std::io::Cursor;
 
 mod remailer;
+mod utils;
 
 const REALM_REMAILER: &'static str = "Remailers' keys";
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "Cypherpunk CLI")]
 struct Args {
-    /// The final message for the recipient
-    //#[structopt(long)]
-    message: String,
-
-    /// Append header for the final sender/remailer
-    /// eg: `--header "X-Header: Me"`
-    /// eg2: `--header "Header1: Value1" "Header2: Value2"`
-    #[structopt(short = "h", long = "header")]
-    headers: Vec<String>,
+    /// The path to the final message for the recipient
+    ///
+    /// This message need to be valid Cypherpunk message.
+    /// Cypherpunk format:
+    /// ```
+    /// ::
+    /// Anon-To: <fianl_recipient>
+    /// Header2: Value2
+    /// Header3: Value3
+    ///
+    /// ##
+    /// Subject: Subject of the message
+    ///
+    /// The message body
+    /// ```
+    ///
+    /// If you omit the `Subject` special header, remove the line `##`
+    #[structopt(parse(from_os_str))]
+    message: PathBuf,
 
     /// The remailer chain of your message
     /// The can up to 8 remailers
@@ -75,33 +96,19 @@ struct Args {
 fn main() {
     println!("Hello, world!");
     let args = Args::from_args();
-    let stats = get_stats(&args).unwrap();
+    let remailers = get_stats(&args).unwrap();
     let keys = get_tpks().unwrap();
     dbg!(&args);
-    //dbg!(&stats);
-    //dbg!(&keys);
-    store_keys(keys);
-}
-
-/// IMatch represents all name captures of one match used in `crate::get_stats()` !
-#[derive(Default, Debug)]
-struct IMatch<'a> {
-    name: Option<Match<'a>>,
-    email: Option<Match<'a>>,
-    options: Option<Match<'a>>,
-    date: Option<Match<'a>>,
-    name2: Option<Match<'a>>,
-    email2: Option<Match<'a>>,
-    latency: Option<Match<'a>>,
-    uptime: Option<Match<'a>>,
+    store_keys(keys).unwrap();
+    encrypt_message(&args, &remailers).unwrap().iter().for_each(|message| println!("{}", message));
 }
 
 /// Retrieve remailers data from an echolot point like name, email, options, date, latency and uptimes
-fn get_stats(args: &Args) -> Fallible<Vec<Remailer>> {
+fn get_stats(args: &Args) -> Fallible<HashMap<String, Remailer>> {
 
     // Retrieve the text version of remailer list from the Args::stats_source
     let text: Fallible<String> = {
-        let url = (&args.stats_source).clone() + "rlist.txt";
+        let url = (&args.stats_source).clone() + "stats/rlist.txt";
         let mut response = get(Url::parse(&url)?)?;
         Ok(response.text()?)
     };
@@ -209,7 +216,7 @@ fn get_stats(args: &Args) -> Fallible<Vec<Remailer>> {
         }
     });
     // Return the final list of remailer (and convert the HashMap into a Vec)
-    Ok(remailers.values().map(|remailer| remailer.clone()).collect())
+    Ok(remailers)
 }
 
 fn get_tpks() -> Fallible<Vec<TPK>> {
@@ -243,7 +250,7 @@ fn store_keys(keys: Vec<TPK>) -> Fallible<()> {
             match user.userid().address_normalized()? {
                 Some(email) => {
                     println!("Key for `{}` imported", email);
-                    store.import(&email, &key); // Import them if it contains a valid email address
+                    store.import(&email, &key)?; // Import them if it contains a valid email address
                 }
                 None => {
                     println!("Key ignored! {:?}", user.userid());
@@ -254,5 +261,75 @@ fn store_keys(keys: Vec<TPK>) -> Fallible<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn encrypt_message(args: &Args, remailers: &HashMap<String, Remailer>) -> Fallible<Vec<String>> {
+    let Args { message, chain, redundancy, ..} = args;
+    let mut encrypted_messages = Vec::new();
+    let message = fs::read_to_string(message)?.into_bytes();
+    let mut rng = rand::thread_rng();
+    let mut random_remailers : Vec<&String> = remailers.keys().collect();
+
+    for _ in  0..(*redundancy as u8) {
+        random_remailers.shuffle(&mut rng);
+        let encrpted_message : Fallible<Vec<u8>> = chain.iter().rev().fold(Ok(message.clone()), | input : Fallible<Vec<u8>>, remailer: &String| {
+            let remailer : Fallible<Remailer> = match remailer.as_str() {
+                "*" => {
+                    let remailer_id = random_remailers.choose(&mut rng).ok_or(err_msg("can't choose randomly a remailer_id"))?;
+                    Ok(remailers.get(remailer_id.clone()).ok_or(err_msg("unknown remailer id ?!"))?.clone())
+                },
+                other if remailers.contains_key(&other.to_string()) => {
+                    Ok(remailers.get(other).ok_or(err_msg(format!("unknown remailer: {}", other)))?.clone())
+                },
+                _ => Err(err_msg(format!("The remailer named `{}` is unknown!", remailer)))
+            };
+            let remailer = remailer?;
+
+            let mut input = Cursor::new(input?);
+            let mut output: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+            let mut store = Store::open(&Context::new()?, REALM_REMAILER, "remailer")?; // Open `remailer` store
+            let mut recipients = Vec::new();
+            recipients.push(remailer.email_address.as_str());
+
+            dbg!(&input);
+            dbg!(&recipients);
+
+            encrypt(&mut store, &mut input, &mut output, recipients)?;
+
+            dbg!(&output);
+            Ok(output.into_inner())
+        });
+        encrypted_messages.push(String::from_utf8(encrpted_message?)?);
+    }
+    Ok(encrypted_messages)
+}
+
+fn encrypt(store: &mut Store, input: &mut Cursor<Vec<u8>>, output: &mut Cursor<Vec<u8>>, recipients: Vec<&str>) -> Fallible<()> {
+    let mut tpks = Vec::new();
+    for r in recipients {
+        tpks.push(store.lookup(r)?.tpk()?)
+    }
+    let recipients : Vec<&TPK> = tpks.iter().collect(); // Get a vector of reference
+
+    let output = armor::Writer::new(io::stdout(), armor::Kind::Message, &[])?;
+
+    let message = Message::new(output);
+
+    let mut sink = Encryptor::new(message,
+                                  &[],
+                                  &recipients,
+                                  EncryptionMode::ForTransport,
+                                  None)?;
+
+    let mut literal_writer = LiteralWriter::new(sink, DataFormat::Binary,
+                                                None, None)?;
+
+    io::copy(input, &mut literal_writer)?;
+
+    dbg!(&literal_writer);
+
+    literal_writer.finalize()?;
+
     Ok(())
 }

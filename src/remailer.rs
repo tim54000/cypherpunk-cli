@@ -11,7 +11,6 @@ pub struct Remailer {
     pub email_address: String,
     pub options: Vec<String>,
     pub latency: Duration,
-    pub keys: Vec<TPK>,
     pub uptime: f32,
 }
 
@@ -44,10 +43,6 @@ impl Remailer {
         &self.options
     }
 
-    pub fn get_keys(&self) -> &Vec<TPK> {
-        &self.keys
-    }
-
     pub fn get_latency(&self) -> &Duration {
         &self.latency
     }
@@ -58,14 +53,6 @@ impl Remailer {
 
     pub fn set_options(&mut self, options: Vec<String>) {
         self.options = options;
-    }
-
-    pub fn set_keys(&mut self, keys: Vec<TPK>) {
-        self.keys = keys;
-    }
-
-    pub fn add_key(&mut self, key: TPK) {
-        self.keys.push(key);
     }
 
     pub fn set_latency(&mut self, duration: Duration) {

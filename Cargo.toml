@@ -11,4 +11,5 @@ structopt = "^0.2"
 reqwest = "^0.9"
 regex = "^1.2"
 failure = "^0.1"
+rand = "^0.7"
 sequoia = { git = "https://gitlab.com/sequoia-pgp/sequoia.git", tag = "v0.9.0" }
