@@ -1,7 +1,9 @@
+use std::fmt::{Display, Error, Formatter};
 use std::time::Duration;
-use std::fmt::{Display, Formatter, Error};
-use regex::Regex;
+
 use failure::Fallible;
+use regex::Regex;
+use sequoia::openpgp::TPK;
 
 #[derive(Default, Clone, Debug)]
 pub struct Remailer {
@@ -9,6 +11,7 @@ pub struct Remailer {
     pub email_address: String,
     pub options: Vec<String>,
     pub latency: Duration,
+    pub keys: Vec<TPK>,
     pub uptime: f32,
 }
 
@@ -41,6 +44,10 @@ impl Remailer {
         &self.options
     }
 
+    pub fn get_keys(&self) -> &Vec<TPK> {
+        &self.keys
+    }
+
     pub fn get_latency(&self) -> &Duration {
         &self.latency
     }
@@ -53,11 +60,19 @@ impl Remailer {
         self.options = options;
     }
 
+    pub fn set_keys(&mut self, keys: Vec<TPK>) {
+        self.keys = keys;
+    }
+
+    pub fn add_key(&mut self, key: TPK) {
+        self.keys.push(key);
+    }
+
     pub fn set_latency(&mut self, duration: Duration) {
         self.latency = duration;
     }
 
-    pub fn set_latency_from(&mut self, latency: String) -> Fallible<()>{
+    pub fn set_latency_from(&mut self, latency: String) -> Fallible<()> {
         let regex_latency = r#"^((?P<hour>\d+):)?(?P<minute>[0-5]?\d):(?P<second>[0-5]\d)$"#;
         let regex_latency = Regex::new(regex_latency)?;
 
@@ -78,5 +93,4 @@ impl Remailer {
     pub fn set_uptime(&mut self, uptime: f32) {
         self.uptime = uptime;
     }
-
 }
