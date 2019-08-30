@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use failure::Fallible;
 use regex::Regex;
-use sequoia::openpgp::TPK;
 
 #[derive(Default, Clone, Debug)]
 pub struct Remailer {
@@ -11,6 +10,7 @@ pub struct Remailer {
     pub email_address: String,
     pub options: Vec<String>,
     pub latency: Duration,
+    pub keys: Vec<f64>,
     pub uptime: f32,
 }
 

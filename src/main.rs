@@ -1,39 +1,34 @@
 extern crate failure;
+#[cfg(feature = "back-gpgme", )]
+extern crate gpgme;
+extern crate percent_encoding;
+extern crate rand;
 extern crate regex;
 extern crate reqwest;
+#[cfg(feature = "back-sequoia", )]
 extern crate sequoia;
-extern crate rand;
-#[macro_use]
 extern crate structopt;
 
+use std::fs;
 use std::collections::HashMap;
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use failure::{Fail, Fallible};
+use failure::Fallible;
 use failure::err_msg;
-use regex::{Match, Regex};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use rand::seq::SliceRandom;
+use regex::{Regex};
 use reqwest::{get, Url};
-use sequoia::core::Context;
-use sequoia::openpgp::parse::Parse;
-use sequoia::openpgp::{TPK, armor};
-use sequoia::store::Store;
 use structopt::StructOpt;
 
 use crate::remailer::Remailer;
 use crate::utils::IMatch;
-use std::fs::File;
-use std::{fs, io};
-use rand::seq::SliceRandom;
-use sequoia::openpgp::crypto::Password;
-use sequoia::openpgp::serialize::stream::{Message, EncryptionMode, Encryptor, LiteralWriter};
-use sequoia::openpgp::constants::DataFormat;
-use std::io::Cursor;
 
 mod remailer;
 mod utils;
+mod pgp;
 
-const REALM_REMAILER: &'static str = "Remailers' keys";
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "Cypherpunk CLI")]
@@ -79,7 +74,7 @@ struct Args {
     /// ```
     /// mailto:remailer@redjohn.net?body=%3A%3A%0AEncrypted%3A%20PGP%0A%0A-----BEGIN%20PGP%20MESSAGE-----<PGP ENCRYPTED MESSAGE HERE>-----END%20PGP%20MESSAGE-----
     /// ```
-    #[structopt(short = "m", long = "mailto_link")]
+    #[structopt(short = "m", long = "mailto")]
     mailto_link: bool,
 
     /// Retrieve the remailer stats at this URL
@@ -91,16 +86,69 @@ struct Args {
     /// Use this url with the `--stats <URL>` arguments
     #[structopt(short = "s", long = "stats", default_value = "https://remailer.paranoici.org/")]
     stats_source: String,
+
+    /// No output from GPG
+    #[structopt(short = "q", long)]
+    quiet: bool,
 }
 
+#[cfg(feature = "back-gpgme", )]
+fn main() {
+    use gpgme::Context;
+
+    println!("Hello, world!");
+    let args = Args::from_args();
+
+    // Get remailers from the stats
+    let remailers = get_stats(&args).unwrap();
+
+    // Init a GPGContext needed by GPGME to import key and to encrypt message.
+    let mut context = Context::from_protocol(gpgme::Protocol::OpenPgp).expect("Can't create a valid GPGME context");
+
+    // Import keys & encrypt message using GPGME
+    import_keys(|key| pgp::gpgme::import_key(&mut context, key)).unwrap();
+    let messages = encrypt_message(&args, &remailers, |_, input, output, recipients| pgp::gpgme::encrypt(&mut context, input, output, recipients)).unwrap();
+
+    messages.iter().for_each(|message| println!("{}", message));
+}
+
+#[cfg(feature = "back-gpg", )]
 fn main() {
     println!("Hello, world!");
     let args = Args::from_args();
+
+    // Get remailers from the stats
     let remailers = get_stats(&args).unwrap();
-    let keys = get_tpks().unwrap();
-    dbg!(&args);
-    store_keys(keys).unwrap();
-    encrypt_message(&args, &remailers).unwrap().iter().for_each(|message| println!("{}", message));
+
+    // Import keys & encrypt message using GPG
+    import_keys(|key| pgp::gpg::import_key(key)).unwrap();
+    let messages = encrypt_message(&args, &remailers, |_, input, output, recipients| pgp::gpg::encrypt(input, output, recipients, (&args).quiet)).unwrap();
+
+    messages.iter().for_each(|message| println!("{}", message));
+}
+
+#[cfg(feature = "back-sequoia", )]
+const REALM_REMAILER: &'static str = "Remailers' keys";
+
+#[cfg(feature = "back-sequoia", )]
+fn main() {
+    use sequoia::store::Store;
+    use sequoia::core::Context;
+
+    println!("Hello, world!");
+    let args = Args::from_args();
+
+    // Get remailers from the stats
+    let remailers = get_stats(&args).unwrap();
+
+    // Init a Store needed by Sequoia to import key, it's an equivalent of a keyring
+    let mut store = Store::open(&Context::new().expect("Can't init a valid Sequoia context"), REALM_REMAILER, "remailer").expect("Can't open Sequoia store!"); // Open `remailer` store
+
+    // Import keys & encrypt message using SequoiaPGP
+    import_keys(|key| pgp::sequoia::import_key(key)).unwrap();
+    let messages = encrypt_message(&args, &remailers, |_, input, output, recipients| pgp::sequoia::encrypt(&mut store, input, output, recipients)).unwrap();
+
+    messages.iter().for_each(|message| println!("{}", message));
 }
 
 /// Retrieve remailers data from an echolot point like name, email, options, date, latency and uptimes
@@ -191,7 +239,7 @@ fn get_stats(args: &Args) -> Fallible<HashMap<String, Remailer>> {
                         Remailer::set_latency_from(remailer, String::from(latency.as_str()))
                             .map_err(|err| {
                                 eprintln!("Can't convert latency from stats URL in acceptable value!\nError: {}", err);
-                            });
+                            }).unwrap();
                         Remailer::set_uptime(remailer, uptime.as_str().parse::<f32>().unwrap_or(0f32));
                     }
                     // In case the remailer has not yet been created by a previous match
@@ -205,7 +253,7 @@ fn get_stats(args: &Args) -> Fallible<HashMap<String, Remailer>> {
                         remailer.set_latency_from(String::from(latency.as_str()))
                             .map_err(|err| {
                                 eprintln!("Can't convert latency from stats URL in acceptable value!\nError: {}", err);
-                            });
+                            }).unwrap();
                         remailers.insert(remailer.get_name().clone(), remailer);
                     }
                 }
@@ -219,117 +267,130 @@ fn get_stats(args: &Args) -> Fallible<HashMap<String, Remailer>> {
     Ok(remailers)
 }
 
-fn get_tpks() -> Fallible<Vec<TPK>> {
-    let mut tpks: Vec<TPK> = Vec::new(); // The future list of TPK (or public key)
+/// Load known keys from the dir and import it in the PGP backend via the import_key function in args
+fn import_keys<F>(mut import_key: F) -> Fallible<()> where
+    F: FnMut(PathBuf) -> Fallible<()>
+{
+    println!("Let's import the keys...");
+
+    // Retrieve the keys path and check it
     let keys_path = Path::new("./remailer-keys/");
     if !keys_path.exists() || !keys_path.is_dir() { // Show error if the `remailer-keys` directory doesn't exist
         eprintln!("The `remailer-keys` directory doesn't exist! It's required!");
     }
-    let keys_dir = std::fs::read_dir(keys_path)?;
+    let keys_dir = std::fs::read_dir(keys_path)?; // List the keys presents in the directory
     for entry in keys_dir {
-        let entry = entry?;
-        if entry.path().is_dir() {
-            println!("Entry `{}` ignored!", entry.path().to_string_lossy());
-        } else {
-            let tpk = TPK::from_file(entry.path()) // Load all public keys located in the dir
-                .map_err(|err| err.context(format!("Failed to load key from file {:?}", entry.path())))?;
-            tpks.push(tpk);
-        }
-    }
-    Ok(tpks)
-}
-
-/// Store the TPKs in the Sequoia `remailer` store/keyring
-///
-/// Each key is registered by its emails
-fn store_keys(keys: Vec<TPK>) -> Fallible<()> {
-    let store = Store::open(&Context::new()?, REALM_REMAILER, "remailer")?; // Open `remailer` store
-
-    for key in keys { // Add keys in the store
-        for user in key.userids() {
-            match user.userid().address_normalized()? {
-                Some(email) => {
-                    println!("Key for `{}` imported", email);
-                    store.import(&email, &key)?; // Import them if it contains a valid email address
-                }
-                None => {
-                    println!("Key ignored! {:?}", user.userid());
-                }
-                _ => {
-                    eprintln!("Key userid is not a valid Option value!");
+        match entry {
+            Ok(entry) => {
+                if entry.path().is_dir() { // Ignoring dir
+                    println!("Entry `{}` ignored!", entry.path().to_string_lossy());
+                } else { // Importing "key" file using the given `import_key` function
+                    import_key(entry.path())
+                        // Map errors and don't panic or return the fail, just ignore this key!
+                        .map_err(|err| eprintln!("An error occurred when importing the key, it'll be ignored: {:?}", err)).unwrap();
                 }
             }
+            // Ignore invalid DirEntry
+            Err(err) => eprintln!("An error occurred on a dir entry, it'll be ignored: {:?}", err),
         }
     }
+
+    println!("Keys successfully imported!");
     Ok(())
 }
 
-fn encrypt_message(args: &Args, remailers: &HashMap<String, Remailer>) -> Fallible<Vec<String>> {
-    let Args { message, chain, redundancy, ..} = args;
-    let mut encrypted_messages = Vec::new();
-    let message = fs::read_to_string(message)?.into_bytes();
-    let mut rng = rand::thread_rng();
-    let mut random_remailers : Vec<&String> = remailers.keys().collect();
+/// Encrypt message (and its redundancies) trough all the remailer chain (sometime randomly)
+fn encrypt_message<F>(args: &Args, remailers: &HashMap<String, Remailer>, mut encrypt: F) -> Fallible<Vec<String>>
+    where F: FnMut(&Remailer, &mut dyn Read, &mut dyn Write, Vec<&str>) -> Fallible<()> {
+    let Args { message, chain, redundancy, .. } = args; // Get message path, chain and redundancy args
 
-    for _ in  0..(*redundancy as u8) {
-        random_remailers.shuffle(&mut rng);
-        let encrpted_message : Fallible<Vec<u8>> = chain.iter().rev().fold(Ok(message.clone()), | input : Fallible<Vec<u8>>, remailer: &String| {
-            let remailer : Fallible<Remailer> = match remailer.as_str() {
-                "*" => {
+    let mut encrypted_messages = Vec::new(); // The message collector
+    let message = fs::read_to_string(message)?.into_bytes(); // Read bytes from message file
+
+    // Prepare thing needed when a remailer must be choose randomly
+    let mut rng = rand::thread_rng();
+    let mut random_remailers: Vec<&String> = remailers.keys().collect();
+
+    for r_count in 0..(*redundancy as u8) {
+        println!("Let's encrypt the message... [redundancy: {}]", r_count + 1);
+
+        random_remailers.shuffle(&mut rng); // Shuffle the list of remailer
+
+        // start encrypting the message; starting with the message (provided as an argument) and
+        // continuing until you get the final message that the user should send to the first
+        // remailer (here the last in the chain [which is reversed from the arguments provided])
+        let encrypted_message: Fallible<Vec<u8>> = chain.iter().rev().fold(Ok(message.clone()), |input: Fallible<Vec<u8>>, remailer: &String| {
+
+            // Retrieve the chosen remailer
+            let remailer: Fallible<Remailer> = match remailer.as_str() {
+                "*" => { // If the remailer provided is "*", it choose one randomly in the vector "random_remailer"
                     let remailer_id = random_remailers.choose(&mut rng).ok_or(err_msg("can't choose randomly a remailer_id"))?;
                     Ok(remailers.get(remailer_id.clone()).ok_or(err_msg("unknown remailer id ?!"))?.clone())
-                },
+                }
+
+                // In the case where it is not randomly selected and exists for the tool, a clone is created from it
                 other if remailers.contains_key(&other.to_string()) => {
                     Ok(remailers.get(other).ok_or(err_msg(format!("unknown remailer: {}", other)))?.clone())
-                },
+                }
                 _ => Err(err_msg(format!("The remailer named `{}` is unknown!", remailer)))
             };
             let remailer = remailer?;
 
-            let mut input = Cursor::new(input?);
-            let mut output: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-            let mut store = Store::open(&Context::new()?, REALM_REMAILER, "remailer")?; // Open `remailer` store
+            println!("This message part will be encrypted for {} remailer...", remailer.get_name());
+
+            // Create an input with Read trait => we choose the Cursor<Vec<u8>>
+            // and embed the input (Vec<u8>) provided in arguments
+            let mut pgp_input = Cursor::new(input?);
+
+            // Create an output with Write trait => we choose again a Cursor<Vec<u8>>
+            let mut pgp_output = Cursor::new(Vec::new());
+
+            // Indicate who the recipients are
             let mut recipients = Vec::new();
-            recipients.push(remailer.email_address.as_str());
+            recipients.push(remailer.get_email().as_str()); // Push the remailer email
 
-            dbg!(&input);
-            dbg!(&recipients);
+            // Encrypt the input (message) with the given function `encrypt`
+            encrypt(&remailer, &mut pgp_input, &mut pgp_output, recipients)?;
 
-            encrypt(&mut store, &mut input, &mut output, recipients)?;
+            // Format the output into a Remailer-valid message
+            let mut output: Vec<u8> = Vec::new();
+            output.append(&mut Vec::from(format!("\n::\nAnon-To: {}\n\n::\nEncrypted: PGP\n\n", remailer.get_email())));
 
-            dbg!(&output);
-            Ok(output.into_inner())
+            output.append(&mut pgp_output.into_inner()); // Append the encrypted message part
+
+            Ok(output) // Return it
         });
-        encrypted_messages.push(String::from_utf8(encrpted_message?)?);
+
+        // Check that the creation of the final message did not fail
+        match encrypted_message {
+            Ok(message) => {
+                println!("Message encrypted!");
+
+                let encrypted_message: String = String::from_utf8(message)?;
+                match args.mailto_link { // Push in the message collector, if needed format the message before.
+                    true => encrypted_messages.push(format_mailto(encrypted_message)),
+                    false => encrypted_messages.push(encrypted_message),
+                };
+            }
+            Err(err) => {
+                eprintln!("Message ignored, error occurred: {:#?}", err);
+            }
+        }
     }
     Ok(encrypted_messages)
 }
 
-fn encrypt(store: &mut Store, input: &mut Cursor<Vec<u8>>, output: &mut Cursor<Vec<u8>>, recipients: Vec<&str>) -> Fallible<()> {
-    let mut tpks = Vec::new();
-    for r in recipients {
-        tpks.push(store.lookup(r)?.tpk()?)
-    }
-    let recipients : Vec<&TPK> = tpks.iter().collect(); // Get a vector of reference
+/// Format the final message (from the String) into a mailto URL
+fn format_mailto(message: String) -> String {
+    println!("Let's format the final message into mailto URL format!");
 
-    let output = armor::Writer::new(io::stdout(), armor::Kind::Message, &[])?;
+    let mut message = message.clone();
+    let email_start = message.find(": ").expect("Invalid Cypherpunk message"); // Find the email start
+    message.drain(..email_start + 2); // Drop all chars before email address
+    let email_end = message.find("\n\n").expect("Invalid Cypherpunk message"); // Find the email end
+    let email: String = message.drain(..email_end).collect(); // Save the email address in the var, and drop all chars before message
+    message.drain(..1);
 
-    let message = Message::new(output);
-
-    let mut sink = Encryptor::new(message,
-                                  &[],
-                                  &recipients,
-                                  EncryptionMode::ForTransport,
-                                  None)?;
-
-    let mut literal_writer = LiteralWriter::new(sink, DataFormat::Binary,
-                                                None, None)?;
-
-    io::copy(input, &mut literal_writer)?;
-
-    dbg!(&literal_writer);
-
-    literal_writer.finalize()?;
-
-    Ok(())
+    let body = utf8_percent_encode(message.as_str(), NON_ALPHANUMERIC).to_string(); // Encode message to UTF-8 Percent Encoding
+    format!("mailto:{}?body={}", email, body).to_string()
 }
