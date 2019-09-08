@@ -1,7 +1,7 @@
 #[cfg(feature = "back-sequoia", )]
 pub mod sequoia {
     use std::fs::File;
-    use std::io::{  Read, Write};
+    use std::io::{Read, Write};
     use std::io;
     use std::path::PathBuf;
 
@@ -136,9 +136,8 @@ pub mod gpg {
     use std::process::{Child, Command};
 
     use failure::{err_msg, Fallible};
-    use rand::Rng;
     use rand::distributions::Alphanumeric;
-
+    use rand::Rng;
 
     const GPG_OUTPUT_START: &'static str = "======== GPG STDOUT ========";
     const GPG_OUTPUT_END: &'static str = "====== END GPG STDOUT ======";
@@ -179,25 +178,22 @@ pub mod gpg {
         if quiet { println!("{}", GPG_OUTPUT_START); }
 
         // Run encryption from gpg command-line
-        let mut child: Child = match cfg!(target_os = "windows") {
-            true => {
-                Command::new("cmd")
-                    .arg("/C")
-                    .arg(format!(r#"gpg {}{} -a -o {} -e {}"#, recipients, q_option, output_path.to_string_lossy(), input_path.to_string_lossy()))
-                    .spawn()
-                    .expect("failed to execute process")
-            }
-            false => {
-                Command::new("sh")
-                    .arg("-c")
-                    .arg(format!(r#"gpg {}{} -a -o {} -e {}"#, recipients, q_option, output_path.to_string_lossy(), input_path.to_string_lossy()))
-                    .spawn()
-                    .expect("failed to execute process")
-            }
+        let mut child: Child = if cfg!(target_os = "windows") {
+            Command::new("cmd")
+                .arg("/C")
+                .arg(format!(r#"gpg {}{} -a -o {} -e {}"#, recipients, q_option, output_path.to_string_lossy(), input_path.to_string_lossy()))
+                .spawn()
+                .expect("failed to execute process")
+        } else {
+            Command::new("sh")
+                .arg("-c")
+                .arg(format!(r#"gpg {}{} -a -o {} -e {}"#, recipients, q_option, output_path.to_string_lossy(), input_path.to_string_lossy()))
+                .spawn()
+                .expect("failed to execute process")
         };
 
         let exit_state = child.wait()?;
-        if quiet {  println!("{}", GPG_OUTPUT_END); }
+        if quiet { println!("{}", GPG_OUTPUT_END); }
 
         // Check encryption result
         match exit_state.code().unwrap_or(9999) {
@@ -209,6 +205,7 @@ pub mod gpg {
 
                 Ok(())
             }
+            // Send error if the execution failed
             9999 => Err(err_msg("GPG exited without any exit code!")),
             other => Err(err_msg(format!("GPG exited with code {}", other))),
         }

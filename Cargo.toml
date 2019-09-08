@@ -1,6 +1,6 @@
 [package]
 name = "cypherpunk-cli"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["tim54000"]
 edition = "2018"
 

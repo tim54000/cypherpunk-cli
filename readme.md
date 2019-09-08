@@ -75,7 +75,7 @@ Another_Header_Present_In_The_Final_Message: A value for it
 
 Message's body here!
 ```
-More info: http://www.panta-rhei.dyndns.org/JBNR-en.htm
+More info: http://www.panta-rhei.dyndns.org/JBNR-en.htm#CForm
 
 #### Tool usage:
 * Encrypt message named `./message.txt`, chain: two random remailers:
