@@ -2,8 +2,6 @@ name: Tim's rusty build
 
 on:
   push:
-    branches:
-      - master
     paths:
       - '*'
       - '!/remailer-keys/*'
@@ -12,10 +10,18 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [macOS-10.14, windows-2016, ubuntu-18.04]
+        os: [windows-2016, ubuntu-18.04]
         backend: [back-gpg]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v1
       - name: Build
-        run: ${{ format("cargo build --verbose --release --no-default-features --features {0}", matrix.backend) }}
+        run: ${{ format('cargo build --verbose --release --no-default-features --features {0}', matrix.backend) }}
+      - name: Release
+        uses: docker://softprops/action-gh-release
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          draft: true
+          files: "/target/release/cypherpunk-cli.exe, /target/release/cypherpunk-cli"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
