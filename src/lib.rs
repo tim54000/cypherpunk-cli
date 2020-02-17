@@ -1,6 +1,5 @@
 use std::io::{Cursor, Read, Write};
 
-use failure::err_msg;
 use failure::Fallible;
 use failure::ResultExt;
 

@@ -1,20 +1,17 @@
 #[cfg(feature = "back-gpg")]
 pub mod gpg {
-    use std::{fs, io, iter};
+    use std::io;
     use std::env::temp_dir;
     use std::fs::File;
     use std::io::{Read, Write};
     use std::path::PathBuf;
-    use std::process::{Child, Command, Stdio};
+    use std::process::{Child, Command};
 
     use failure::{err_msg, Fallible, ResultExt};
     use tempfile;
     use tempfile::tempdir_in;
 
     use crate::lib::PGPBackend;
-
-    const GPG_OUTPUT_START: &'static str = "======== GPG STDOUT ========";
-    const GPG_OUTPUT_END: &'static str = "====== END GPG STDOUT ======";
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct GPGBackend {
@@ -43,7 +40,7 @@ pub mod gpg {
 
     impl PGPBackend for GPGBackend {
         fn import_key(&self, key: Vec<u8>) -> Fallible<()> {
-            let quiet = self.quiet;
+            let quiet = if self.quiet { "-q" } else { "" };
 
             let tmp_path = tempdir_in(self.temp_dir.clone()).context("Cannot create a temporary directory to import the key!")?.into_path();
 
@@ -57,13 +54,13 @@ pub mod gpg {
             // Import key from gpg command-line
             let mut child = if cfg!(target_os = "windows") {
                 Command::new("cmd")
-                    .args(&["/C", format!("gpg --import --yes {}", key_path.to_string_lossy()).as_str()])
+                    .args(&["/C", format!("gpg --import --yes {} {}", quiet, key_path.to_string_lossy()).as_str()])
                     .spawn()
                     .context("Failed to execute GPG")?
             } else {
                 Command::new("sh")
                     .arg("-c")
-                    .arg(format!("gpg --import --yes {}", key_path.to_string_lossy()).as_str())
+                    .arg(format!("gpg --import --yes {} {}", quiet, key_path.to_string_lossy()).as_str())
                     .spawn()
                     .context("Failed to execute GPG")?
             };
@@ -79,7 +76,7 @@ pub mod gpg {
         }
 
         fn encrypt(&self, input: &mut dyn Read, output: &mut dyn Write, recipients: Vec<String>) -> Fallible<()> {
-            let quiet = self.quiet;
+            let quiet = if self.quiet { "-q" } else { "" };
 
             let tmp_path = tempdir_in(self.temp_dir.clone()).context("Cannot create a temporary directory to encrypt your message!")?.into_path();
 
@@ -97,13 +94,13 @@ pub mod gpg {
             let mut child: Child = if cfg!(target_os = "windows") {
                 Command::new("cmd")
                     .arg("/C")
-                    .arg(format!(r#"gpg -R "{}" -a -o {} --always-trust -e {}"#, recipients, out_path.to_string_lossy(), in_path.to_string_lossy()))
+                    .arg(format!(r#"gpg -R "{}" -a -o {} {} --always-trust -e {}"#, recipients, out_path.to_string_lossy(), quiet, in_path.to_string_lossy()))
                     .spawn()
                     .context("Failed to execute GPG")?
             } else {
                 Command::new("sh")
                     .arg("-c")
-                    .arg(format!(r#"gpg -R "{}" -a -o {} --always-trust -e {}"#, recipients, out_path.to_string_lossy(), in_path.to_string_lossy()))
+                    .arg(format!(r#"gpg -R "{}" -a -o {} {} --always-trust -e {}"#, recipients, out_path.to_string_lossy(), quiet, in_path.to_string_lossy()))
                     .spawn()
                     .context("Failed to execute GPG")?
             };
