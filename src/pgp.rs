@@ -1,8 +1,8 @@
 #[cfg(feature = "back-gpg")]
 pub mod gpg {
-    use std::io;
     use std::env::temp_dir;
     use std::fs::File;
+    use std::io;
     use std::io::{Read, Write};
     use std::path::PathBuf;
     use std::process::{Child, Command};
@@ -37,30 +37,48 @@ pub mod gpg {
         }
     }
 
-
     impl PGPBackend for GPGBackend {
         fn import_key(&self, key: Vec<u8>) -> Fallible<()> {
             let quiet = if self.quiet { "-q" } else { "" };
 
-            let tmp_path = tempdir_in(self.temp_dir.clone()).context("Cannot create a temporary directory to import the key!")?.into_path();
+            let tmp_path = tempdir_in(self.temp_dir.clone())
+                .context("Cannot create a temporary directory to import the key!")?
+                .into_path();
 
             let key_path: PathBuf = tmp_path.join("key.txt");
             {
-                let mut tmp = File::create(key_path.clone()).context("Cannot create key file to import")?;
-                tmp.write_all(key.as_slice()).context("Cannot copy key to temporary file")?;
+                let mut tmp =
+                    File::create(key_path.clone()).context("Cannot create key file to import")?;
+                tmp.write_all(key.as_slice())
+                    .context("Cannot copy key to temporary file")?;
                 tmp.flush().context("Cannot save temporary key file")?;
             }
 
             // Import key from gpg command-line
             let mut child = if cfg!(target_os = "windows") {
                 Command::new("cmd")
-                    .args(&["/C", format!("gpg --import --yes {} {}", quiet, key_path.to_string_lossy()).as_str()])
+                    .args(&[
+                        "/C",
+                        format!(
+                            "gpg --import --yes {} {}",
+                            quiet,
+                            key_path.to_string_lossy()
+                        )
+                        .as_str(),
+                    ])
                     .spawn()
                     .context("Failed to execute GPG")?
             } else {
                 Command::new("sh")
                     .arg("-c")
-                    .arg(format!("gpg --import --yes {} {}", quiet, key_path.to_string_lossy()).as_str())
+                    .arg(
+                        format!(
+                            "gpg --import --yes {} {}",
+                            quiet,
+                            key_path.to_string_lossy()
+                        )
+                        .as_str(),
+                    )
                     .spawn()
                     .context("Failed to execute GPG")?
             };
@@ -75,15 +93,25 @@ pub mod gpg {
             }
         }
 
-        fn encrypt(&self, input: &mut dyn Read, output: &mut dyn Write, recipients: Vec<String>) -> Fallible<()> {
+        fn encrypt(
+            &self,
+            input: &mut dyn Read,
+            output: &mut dyn Write,
+            recipients: Vec<String>,
+        ) -> Fallible<()> {
             let quiet = if self.quiet { "-q" } else { "" };
 
-            let tmp_path = tempdir_in(self.temp_dir.clone()).context("Cannot create a temporary directory to encrypt your message!")?.into_path();
+            let tmp_path = tempdir_in(self.temp_dir.clone())
+                .context("Cannot create a temporary directory to encrypt your message!")?
+                .into_path();
 
             let in_path: PathBuf = tmp_path.clone().join("input.txt");
             {
-                let mut tmp = File::create(in_path.clone()).context("Cannot create an input file (which contains your message) to encrypt it")?;
-                io::copy(input, &mut tmp).context("Cannot copy your message in temporary input file")?;
+                let mut tmp = File::create(in_path.clone()).context(
+                    "Cannot create an input file (which contains your message) to encrypt it",
+                )?;
+                io::copy(input, &mut tmp)
+                    .context("Cannot copy your message in temporary input file")?;
                 tmp.flush().context("Cannot save temporary message file")?;
             }
 
@@ -94,13 +122,25 @@ pub mod gpg {
             let mut child: Child = if cfg!(target_os = "windows") {
                 Command::new("cmd")
                     .arg("/C")
-                    .arg(format!(r#"gpg -R "{}" -a -o {} {} --always-trust -e {}"#, recipients, out_path.to_string_lossy(), quiet, in_path.to_string_lossy()))
+                    .arg(format!(
+                        r#"gpg -R "{}" -a -o {} {} --always-trust -e {}"#,
+                        recipients,
+                        out_path.to_string_lossy(),
+                        quiet,
+                        in_path.to_string_lossy()
+                    ))
                     .spawn()
                     .context("Failed to execute GPG")?
             } else {
                 Command::new("sh")
                     .arg("-c")
-                    .arg(format!(r#"gpg -R "{}" -a -o {} {} --always-trust -e {}"#, recipients, out_path.to_string_lossy(), quiet, in_path.to_string_lossy()))
+                    .arg(format!(
+                        r#"gpg -R "{}" -a -o {} {} --always-trust -e {}"#,
+                        recipients,
+                        out_path.to_string_lossy(),
+                        quiet,
+                        in_path.to_string_lossy()
+                    ))
                     .spawn()
                     .context("Failed to execute GPG")?
             };

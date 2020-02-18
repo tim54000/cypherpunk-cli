@@ -20,23 +20,11 @@ These instructions will get you a copy of the project up and running on your loc
 
 ### Prerequisites
 
-First of all, you need Cap'n'proco if you build the tool with sequoiaPGP backend, 
-otherwise you don't actually need it!
-And of course, Rust =)
-
-#### Cap'n'proto
-
-> Only for SequoiaPGP backend \[actually don't work]
-
-For Debian/Ubuntu: run ```$ apt-get install capnproto```  
-For OSX: run ```$ brew install capnp```  
-For Arch distribs: run ```$ pacman -Sy capnproto```
-
-For others systems, follow the official guide at https://capnproto.org/install.html
+First of all, you need Rust =)
 
 #### Rust
 
-To build source, you need to have a correct Rust toolchain and compilator.
+To build source, you need to have a correct Rust toolchain and compiler.
 If you don't have yet one, check https://rustup.rs/
 
 #### Build it!
@@ -54,7 +42,15 @@ On Windows, run `./target/release/cypherpunk-cli.exe --help`
 
 ### Installing
 
-The installation has not yet been thought of, for the moment just use the binary you created
+The installation hasn't been thought about yet, for now, just use the binary you created. 
+However if you really want to add Cypherpunk in your path, you can try:
+
+```SHELL
+$ cargo install --package cypherpunk-cli --release
+```
+
+However, you may need to add the `remailers.json` config to the same directory otherwise 
+it won't work.
 
 ## Usage
 
@@ -75,25 +71,65 @@ Another_Header_Present_In_The_Final_Message: A value for it
 
 Message's body here!
 ```
-More info: http://www.panta-rhei.dyndns.org/JBNR-en.htm#CForm
+More info: http://www.panta-rhei.dyndns.org/JBNR-en.htm#CForm  
+(if down: [QmboFHizh9ys57DXcVsniVDYS46gsiBP716u2sqQE7xgV4](https://gateway.ipfs.io/ipfs/QmboFHizh9ys57DXcVsniVDYS46gsiBP716u2sqQE7xgV4))
 
 #### Tool usage:
-* Encrypt message named `./message.txt`, chain: two random remailers:
+* Encrypt message from stdin, chain with two random remailer:
 ```
-$ ./target/release/cypherpunk-cli ./message.txt --chian "*" "*"
-```
-
-* Encrypt message named `./message.txt`, chain to paranoia -> dizum:
-```
-$ ./target/release/cypherpunk-cli ./message.txt --chain paranoia dizum
+$ cypherpunk-cli --chain "*" "*"
 ```
 
-* Encrypt message named `./message.txt`, chain: two random remailers, redundancy: 2 messages:
+* Encrypt message named `./message.txt`, chain with paranoia and dizum:
 ```
-$ ./target/release/cypherpunk-cli ./message.txt --chain "*" "*" -r 2
+$ cypherpunk-cli --input ./message.txt --chain paranoia dizum
 ```
 
-* Encrypt message named `./message.txt`, chain: two random remailers, formatted to mailto URL:
+* Encrypt message named `./message.txt`, chain with paranoia and dizum, saved into `./out/`:
 ```
-$ ./target/release/cypherpunk-cli ./message.txt --chain "*" "*" --mailto
+$ cypherpunk-cli --input ./message.txt --chain paranoia dizum --output ./out/
+```
+
+* Encrypt message named `./message.txt`, chain with paranoia and dizum, redundancy: 2 messages:
+```
+$ cypherpunk-cli --input ./message.txt --chain paranoia dizum --redundancy 2
+```
+
+* Encrypt message named `./message.txt`, chain with two random remailer, formatted to mailto URL:
+```
+$ cypherpunk-cli --input ./message.txt --chain "*" "*" --format mailto
+```
+
+* Encrypt message named `./message.txt`, chain with austria, formatted to EML file:
+```
+$ cypherpunk-cli --input ./message.txt --chain austria --format eml
+```
+
+##### cypherpunk --help
+```SHELL
+cypherpunk x.x.x
+CLI tool to encrypt your messages between different remailers easily
+
+USAGE:
+    cypherpunk-cli [FLAGS] [OPTIONS]
+
+FLAGS:
+    -h, --help       Prints help information
+    -q, --quiet      The quiet flag to make the PGP backend quiet and soon more...
+    -V, --version    Prints version information
+
+OPTIONS:
+    -c, --chain <chain>...           The remailer chain through which your message will pass. [required] Tips: you can
+                                     use a joker "*" to randomly choose one remailer in the config. It will change with
+                                     each redundant message
+    -f, --format <format>            The output message format, by default it will be in Cypherpunk format [default:
+                                     cypherpunk]  [possible values: Cypherpunk, Mailto, EML]
+    -i, --input <input>              Messsage input file, stdin if not present; the message must be readable by the last
+                                     Cypherpunk remailer in the chain
+    -o, --output <output>            Output dir, stdout if not present; all the encrypted message for remailer will be
+                                     there
+    -r, --redundancy <redundancy>    Number of redundancy message to encrypted because Cypherpunk may forgot your
+                                     message. If you use a "*" for remailer it will be randomly choose for each
+                                     redundancy message [default: 1]
+
 ```
