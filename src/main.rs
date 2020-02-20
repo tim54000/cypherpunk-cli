@@ -49,7 +49,8 @@ impl OutputFormat {
     about = "CLI tool to encrypt your messages between different remailers easily"
 )]
 struct Opt {
-    /// Messsage input file, stdin if not present; the message must be readable by the last Cypherpunk remailer in the chain.
+    /// Messsage input file, stdin if not present; the message must be readable by the last Cypherpunk
+    /// remailer in the chain.
     #[structopt(short, long, parse(from_os_str))]
     input: Option<PathBuf>,
 
@@ -57,19 +58,38 @@ struct Opt {
     #[structopt(short, long, parse(from_os_str))]
     output: Option<PathBuf>,
 
-    /// Number of redundancy message to encrypted because Cypherpunk may forgot your message.
-    /// If you use a "*" for remailer it will be randomly choose for each redundancy message.
+    /// Number of redundancy message to encrypted
+    ///
+    /// Because the Cypherpunk remailers can forget messages, it's a good idea to send several messages
+    /// to different remailers to avoid the loss of the message.
+    /// Tips: If you use a "*" for remailer it will be randomly choose for each redundancy message.
     #[structopt(short, long, default_value = "1")]
     redundancy: u8,
 
     /// The remailer chain through which your message will pass. [required]
-    /// You can use a joker "*" to randomly choose one remailer in the config. It will change with each redundant message.
+    ///
+    /// Tips: You can use a joker "*" to randomly choose one remailer in the config. It will change
+    /// with each redundant message.
     #[structopt(short, long)]
     chain: Vec<String>,
+
+    /// Remailer headers to add for each remailer message. Only one key-value per string.
+    ///
+    /// This can be useful to add `Inflate` header to each message.
+    ///
+    /// Examples:
+    /// `--header "Key: Value"`
+    /// `--header "Key1: Value1" "Key2: Value2"`
+    #[structopt(short="H", long="header")]
+    headers: Vec<String>,
 
     /// The output message format.
     #[structopt(short, long, possible_values = & OutputFormat::variants(), case_insensitive = true, default_value = "cypherpunk")]
     format: OutputFormat,
+
+    /// The path to the remailer config, useful if you have install this tool.
+    #[structopt(long, default_value="./remailers.json")]
+    config: PathBuf,
 
     /// The quiet flag to make the PGP backend quiet and soon more...
     #[structopt(short, long)]
@@ -89,7 +109,7 @@ fn main() {
     println!("Config loading...");
 
     // Load config and run all
-    load_config("./remailers.json")
+    load_config(&opts.config)
         .and_then(|config| {
             let mut rng = thread_rng();
             let remmap = remailer_map(config.remailers.clone());
@@ -139,12 +159,15 @@ fn main() {
 
             println!("Encrypting...");
 
+            let mut chain = (&opts.chain).clone();
+            chain.reverse();
+
             red.map(|index| {
                 println!("Encrypting message n°{}...", index + 1);
                 let chain =
-                    make_chain(&opts.chain, &remmap, &mut rng).context("Can't select a chain!")?;
+                    make_chain(&chain, &remmap, &mut rng).context("Can't select a chain!")?;
                 println!("Selected chain: {}", chain.join(", "));
-                Ok(core.encrypt_message(chain, message.clone())?)
+                Ok(core.encrypt_message(&chain, &opts.headers,message.clone())?)
             })
             .enumerate()
             .map(|(index, res): (_, Fallible<Vec<u8>>)| -> Fallible<()> {

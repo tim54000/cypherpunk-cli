@@ -106,30 +106,53 @@ $ cypherpunk-cli --input ./message.txt --chain austria --format eml
 ```
 
 ##### cypherpunk --help
-```SHELL
-cypherpunk x.x.x
+```
+cypherpunk 2.0.0-beta
+Tim54000
 CLI tool to encrypt your messages between different remailers easily
 
 USAGE:
     cypherpunk-cli [FLAGS] [OPTIONS]
 
 FLAGS:
-    -h, --help       Prints help information
-    -q, --quiet      The quiet flag to make the PGP backend quiet and soon more...
-    -V, --version    Prints version information
+    -h, --help       
+            Prints help information
+
+    -q, --quiet      
+            The quiet flag to make the PGP backend quiet and soon more...
+
+    -V, --version    
+            Prints version information
+
 
 OPTIONS:
-    -c, --chain <chain>...           The remailer chain through which your message will pass. [required] Tips: you can
-                                     use a joker "*" to randomly choose one remailer in the config. It will change with
-                                     each redundant message
-    -f, --format <format>            The output message format, by default it will be in Cypherpunk format [default:
-                                     cypherpunk]  [possible values: Cypherpunk, Mailto, EML]
-    -i, --input <input>              Messsage input file, stdin if not present; the message must be readable by the last
-                                     Cypherpunk remailer in the chain
-    -o, --output <output>            Output dir, stdout if not present; all the encrypted message for remailer will be
-                                     there
-    -r, --redundancy <redundancy>    Number of redundancy message to encrypted because Cypherpunk may forgot your
-                                     message. If you use a "*" for remailer it will be randomly choose for each
-                                     redundancy message [default: 1]
+    -c, --chain <chain>...           
+            The remailer chain through which your message will pass. [required]
+            
+            Tips: You can use a joker "*" to randomly choose one remailer in the config. It will change with each
+            redundant message.
+        --config <config>            
+            The path to the remailer config, useful if you have install this tool [default: ./remailers.json]
 
+    -f, --format <format>            
+            The output message format [default: cypherpunk]  [possible values: Cypherpunk, Mailto, EML]
+
+    -H, --header <headers>...        
+            Remailer headers to add for each remailer message. Only one key-value per string.
+            
+            This can be useful to add `Inflate` header to each message.
+            
+            Examples: `--header "Key: Value"` `--header "Key1: Value1" "Key2: Value2"`
+    -i, --input <input>              
+            Messsage input file, stdin if not present; the message must be readable by the last Cypherpunk remailer in
+            the chain
+    -o, --output <output>            
+            Output dir, stdout if not present; all the encrypted message for remailer will be there
+
+    -r, --redundancy <redundancy>    
+            Number of redundancy message to encrypted
+            
+            Because the Cypherpunk remailers can forget messages, it's a good idea to send several messages to different
+            remailers to avoid the loss of the message. Tips: If you use a "*" for remailer it will be randomly choose
+            for each redundancy message. [default: 1]
 ```

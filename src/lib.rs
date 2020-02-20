@@ -5,7 +5,7 @@ use failure::ResultExt;
 
 pub trait Cypherpunk {
     fn import_keys(&self, keys: Vec<Vec<u8>>) -> Fallible<()>;
-    fn encrypt_message(&self, chain: Vec<String>, message: Vec<u8>) -> Fallible<Vec<u8>>;
+    fn encrypt_message(&self, chain: &Vec<String>, headers: &Vec<String>, message: Vec<u8>) -> Fallible<Vec<u8>>;
 }
 
 pub trait PGPBackend {
@@ -37,13 +37,13 @@ impl Cypherpunk for CypherpunkCore {
         Ok(())
     }
 
-    fn encrypt_message(&self, chain: Vec<String>, message: Vec<u8>) -> Fallible<Vec<u8>> {
+    fn encrypt_message(&self, chain: &Vec<String>, headers: &Vec<String>, message: Vec<u8>) -> Fallible<Vec<u8>> {
         let pgp = self.pgp.as_ref();
         chain.iter().fold(Ok(message), |input, remailer| {
             let recipients = vec![remailer.clone()];
             let mut readin = Cursor::new(input?);
-
-            let headers = format!("\n::\nAnon-To: {}\n\n::\nEncrypted: PGP\n\n", remailer);
+            let addheaders : String = headers.join("\n");
+            let headers = format!("\n::\nAnon-To: {}\n{}\n\n::\nEncrypted: PGP\n\n", remailer, addheaders);
             let mut writeout: Cursor<Vec<u8>> = Cursor::new(Vec::new());
 
             pgp.encrypt(&mut readin, &mut writeout, recipients)

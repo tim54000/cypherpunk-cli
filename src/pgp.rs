@@ -16,30 +16,38 @@ pub mod gpg {
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct GPGBackend {
         temp_dir: PathBuf,
+        keyring: PathBuf,
         quiet: bool,
     }
 
     impl GPGBackend {
         pub fn new(temp: Option<PathBuf>, quiet: bool) -> Self {
+            let tmp = temp.unwrap_or(temp_dir());
+            let keyring = match tempdir_in(tmp.clone()) {
+                Ok(dir) => dir.into_path().clone().join("keyring.gpg"),
+                Err(_err) =>  {
+                    eprintln!("Keyring temp dir is unwrittable... Switch to fallback keyring");
+                    tmp.clone().join("cypherpunk-cli_keyring.gpg")
+                }
+            };
             return Self {
                 quiet,
-                temp_dir: temp.unwrap_or(temp_dir()),
+                temp_dir: tmp,
+                keyring,
             };
         }
     }
 
     impl Default for GPGBackend {
         fn default() -> Self {
-            return Self {
-                quiet: false,
-                temp_dir: temp_dir(),
-            };
+            Self::new(None, false)
         }
     }
 
     impl PGPBackend for GPGBackend {
         fn import_key(&self, key: Vec<u8>) -> Fallible<()> {
             let quiet = if self.quiet { "-q" } else { "" };
+            let keyring = &self.keyring;
 
             let tmp_path = tempdir_in(self.temp_dir.clone())
                 .context("Cannot create a temporary directory to import the key!")?
@@ -60,7 +68,8 @@ pub mod gpg {
                     .args(&[
                         "/C",
                         format!(
-                            "gpg --import --yes {} {}",
+                            "gpg --no-default-keyring --keyring={} --import --yes {} {}",
+                            keyring.to_string_lossy(),
                             quiet,
                             key_path.to_string_lossy()
                         )
@@ -73,7 +82,8 @@ pub mod gpg {
                     .arg("-c")
                     .arg(
                         format!(
-                            "gpg --import --yes {} {}",
+                            "gpg --no-default-keyring --keyring={} --import --yes {} {}",
+                            keyring.to_string_lossy(),
                             quiet,
                             key_path.to_string_lossy()
                         )
@@ -100,6 +110,7 @@ pub mod gpg {
             recipients: Vec<String>,
         ) -> Fallible<()> {
             let quiet = if self.quiet { "-q" } else { "" };
+            let keyring = &self.keyring;
 
             let tmp_path = tempdir_in(self.temp_dir.clone())
                 .context("Cannot create a temporary directory to encrypt your message!")?
@@ -123,7 +134,8 @@ pub mod gpg {
                 Command::new("cmd")
                     .arg("/C")
                     .arg(format!(
-                        r#"gpg -R "{}" -a -o {} {} --always-trust -e {}"#,
+                        r#"gpg --no-default-keyring --keyring={} -R "{}" -a -o {} {} --always-trust -e {}"#,
+                        keyring.to_string_lossy(),
                         recipients,
                         out_path.to_string_lossy(),
                         quiet,
@@ -135,7 +147,8 @@ pub mod gpg {
                 Command::new("sh")
                     .arg("-c")
                     .arg(format!(
-                        r#"gpg -R "{}" -a -o {} {} --always-trust -e {}"#,
+                        r#"gpg --no-default-keyring --keyring={} -R "{}" -a -o {} {} --always-trust -e {}"#,
+                        keyring.to_string_lossy(),
                         recipients,
                         out_path.to_string_lossy(),
                         quiet,
