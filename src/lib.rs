@@ -8,7 +8,12 @@ pub trait Cypherpunk {
     /// Import the keys given to the PGP backend
     fn import_keys(&self, keys: Vec<Vec<u8>>) -> Fallible<()>;
     /// Encrypt the given message for the given chain with additionnal headers
-    fn encrypt_message(&self, chain: &Vec<String>, headers: &Vec<String>, message: Vec<u8>) -> Fallible<Vec<u8>>;
+    fn encrypt_message(
+        &self,
+        chain: &[String],
+        headers: &[String],
+        message: Vec<u8>,
+    ) -> Fallible<Vec<u8>>;
 }
 
 /// Representation of a PGP back-end usable by a Cypherpunk-capable core
@@ -38,9 +43,7 @@ impl<P: PGPBackend> CypherpunkCore<P> {
 
 impl<P: PGPBackend + Default> Default for CypherpunkCore<P> {
     fn default() -> Self {
-        Self {
-            pgp: P::default()
-        }
+        Self { pgp: P::default() }
     }
 }
 
@@ -53,31 +56,40 @@ impl<P: PGPBackend> Cypherpunk for CypherpunkCore<P> {
         Ok(())
     }
 
-    fn encrypt_message(&self, chain: &Vec<String>, headers: &Vec<String>, message: Vec<u8>) -> Fallible<Vec<u8>> {
+    fn encrypt_message(
+        &self,
+        chain: &[String],
+        headers: &[String],
+        message: Vec<u8>,
+    ) -> Fallible<Vec<u8>> {
         // Encrypt the message throught the remailer chain
         chain.iter().fold(Ok(message), |input, remailer| {
             // Pepare to encryption
             let mut readin = Cursor::new(input?);
             let mut writeout: Cursor<Vec<u8>> = Cursor::new(Vec::new());
             let recipients = vec![remailer.clone()];
-            let addheaders : String = headers.join("\n");
-            // Make the next message to which add the encrypted body
-            let message = format!("\n::\nAnon-To: {}\n{}\n\n::\nEncrypted: PGP\n\n", remailer, addheaders);
+            let addheaders: String = headers.join("\n");
+            // Make the wrapper message to which add the encrypted body
+            let message = format!(
+                "\n::\nAnon-To: {}\n{}\n\n::\nEncrypted: PGP\n\n",
+                remailer, addheaders
+            );
 
             // Encrypt the message for the remailer
-            self.pgp.encrypt(&mut readin, &mut writeout, recipients)
+            self.pgp
+                .encrypt(&mut readin, &mut writeout, recipients)
                 .context("Encryption failed!")?;
 
             // Format the final message in Cypherpunk format
             let mut output: Vec<u8> = Vec::new();
-            // Add the headers
+            // Write the wrapper message
             output
                 .write_all(message.as_bytes())
-                .context("Cannot add remailer headers to the output")?;
+                .context("Cannot write the message wrapper to the output")?;
             // Add the encapsulated and now encrypted body
             output
                 .write_all(writeout.into_inner().as_slice())
-                .context("Cannot format final output message")?;
+                .context("Cannot write the encapsulated message in the wrapper message")?;
             Ok(output)
         })
     }

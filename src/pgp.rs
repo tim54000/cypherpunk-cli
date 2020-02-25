@@ -13,6 +13,7 @@ pub mod gpg {
 
     use crate::lib::PGPBackend;
 
+    /// A PGP Backend using the command-line gpg
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct GPGBackend {
         temp_dir: PathBuf,
@@ -21,20 +22,23 @@ pub mod gpg {
     }
 
     impl GPGBackend {
+        /// Create a new GPGBackend instance
         pub fn new(temp: Option<PathBuf>, quiet: bool) -> Self {
-            let tmp = temp.unwrap_or(temp_dir());
+            // Create a keyring file
+            let tmp = temp.unwrap_or_else(temp_dir);
             let keyring = match tempdir_in(tmp.clone()) {
-                Ok(dir) => dir.into_path().clone().join("keyring.gpg"),
-                Err(_err) =>  {
-                    eprintln!("Keyring temp dir is unwrittable... Switch to fallback keyring");
+                Ok(dir) => dir.into_path().join("keyring.gpg"),
+                Err(_err) => {
+                    // "Keyring temp dir is unwrittable... Switch to fallback keyring;
                     tmp.clone().join("cypherpunk-cli_keyring.gpg")
                 }
             };
-            return Self {
+            // Return the GPGBackend
+            Self {
                 quiet,
                 temp_dir: tmp,
                 keyring,
-            };
+            }
         }
     }
 
@@ -46,9 +50,11 @@ pub mod gpg {
 
     impl PGPBackend for GPGBackend {
         fn import_key(&self, key: Vec<u8>) -> Fallible<()> {
+            // Retrieve keyring path and quiet flag
             let quiet = if self.quiet { "-q" } else { "" };
             let keyring = &self.keyring;
 
+            // Create a temp dir and file who contain the key
             let tmp_path = tempdir_in(self.temp_dir.clone())
                 .context("Cannot create a temporary directory to import the key!")?
                 .into_path();
@@ -93,7 +99,8 @@ pub mod gpg {
                     .context("Failed to execute GPG")?
             };
 
-            let exit_state = child.wait()?;
+            // retrieve its exit status
+            let exit_state = child.wait().context("GPG unexpected exit")?;
 
             // Check importation result
             match exit_state.code().unwrap_or(-1099) {
@@ -109,9 +116,11 @@ pub mod gpg {
             output: &mut dyn Write,
             recipients: Vec<String>,
         ) -> Fallible<()> {
+            // Retrieve keyring path and quiet flag
             let quiet = if self.quiet { "-q" } else { "" };
             let keyring = &self.keyring;
 
+            // Creat a temp dir for input and output files
             let tmp_path = tempdir_in(self.temp_dir.clone())
                 .context("Cannot create a temporary directory to encrypt your message!")?
                 .into_path();
@@ -126,7 +135,8 @@ pub mod gpg {
                 tmp.flush().context("Cannot save temporary message file")?;
             }
 
-            let out_path: PathBuf = tmp_path.clone().join("output.txt");
+            let out_path: PathBuf = tmp_path.join("output.txt");
+            // Create the recipients args
             let recipients = recipients.join(" -r ");
 
             // Run encryption from gpg command-line
@@ -157,8 +167,8 @@ pub mod gpg {
                     .spawn()
                     .context("Failed to execute GPG")?
             };
-
-            let exit_state = child.wait()?;
+            // retrieve its exit status
+            let exit_state = child.wait().context("GPG unexpected exit")?;
 
             // Check encryption result
             match exit_state.code().unwrap_or(9999) {

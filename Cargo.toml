@@ -1,7 +1,7 @@
 [package]
 name = "cypherpunk-cli"
 description = "CLI tool to encrypt your messages between different remailers easily"
-version = "2.0.0-beta.3"
+version = "2.0.0"
 authors = ["Tim54000"]
 edition = "2018"
 
