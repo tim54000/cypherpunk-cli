@@ -20,9 +20,7 @@ use crate::pgp::gpg::GPGBackend;
 mod lib;
 mod pgp;
 
-// TODO:
-// - Make comments
-
+// Possible output formats
 arg_enum! {
     #[non_exhaustive]
     #[derive(PartialEq, Debug, Copy, Clone)]
@@ -34,6 +32,7 @@ arg_enum! {
 }
 
 impl OutputFormat {
+    /// Get the specific extension for this particular format
     fn extension(self) -> &'static str {
         match self {
             OutputFormat::EML => "eml",
@@ -97,9 +96,10 @@ struct Opt {
 }
 
 fn main() {
+    // Get the CLI args
     let opts: Opt = Opt::from_args();
 
-    // To init a PGP Back, here for the GPG one.
+    // To init a PGP Back, here for the back-gpg one.
     #[cfg(feature = "back-gpg")]
     fn init_pgp_back(quiet: bool) -> impl PGPBackend {
         GPGBackend::new(None, quiet)
@@ -108,44 +108,36 @@ fn main() {
     println!("Hello!");
     println!("Config loading...");
 
-    // Load config and run all
+    // Load config (from path arg) and run all
     load_config(&opts.config)
         .and_then(|config| {
+            // Init a random thread and the remailer map from config
             let mut rng = thread_rng();
             let remmap = remailer_map(config.remailers.clone());
 
             // Init infra (the PGP backend)
             let pgp_back = init_pgp_back(opts.quiet);
             // Init the domain (the CypherpunkCore)
-            let core = CypherpunkCore::new(Box::new(pgp_back));
+            let core = CypherpunkCore::new(pgp_back);
 
+            // Import remailers' key
             println!("Importing remailers' key...");
+            import_keys(&core, &config.remailers)?;
 
-            {
-                // Retrieve remailers' keys from config
-                let keys: Vec<Vec<u8>> = config
-                    .remailers
-                    .iter()
-                    .filter_map(|remailer| match remailer.is_enabled() {
-                        true => remailer.into_key().ok(),
-                        false => None,
-                    })
-                    .collect();
-
-                // Import keys in the Cypherpunk Core
-                core.import_keys(keys)?;
-            }
-
-            // Encrypt the mail
+            // Preparing the mail encrypting
+            // Select number of redundancy messages
             let red = 0..opts.redundancy;
 
+            // Retrieve the message to send
             let mut message: Vec<u8> = Vec::new();
             match &opts.input {
+                // from path, if given
                 Some(path) => {
                     println!("Retrieving message from file...");
                     let mut file = File::open(path)?;
                     file.read_to_end(&mut message)?;
                 }
+                // from stdin, otherwise
                 None => {
                     println!("\nType your message:");
                     stdin().lock().read_to_end(&mut message)?;
@@ -153,30 +145,42 @@ fn main() {
                 }
             };
 
+            // if an output path is given, create the directory
             if let Some(path) = opts.output.clone() {
                 create_dir_all(path)?;
             }
 
             println!("Encrypting...");
 
+            // Reverse the chain, we start the encryption for the farther remailer, etc...
             let mut chain = (&opts.chain).clone();
             chain.reverse();
 
+            // Encrypting...
             red.map(|index| {
                 println!("Encrypting message n°{}...", index + 1);
+                // Build a remailer chain
                 let chain =
-                    make_chain(&chain, &remmap, &mut rng).context("Can't select a chain!")?;
+                    make_chain(&chain, &remmap, &mut rng).context("Can't build a chain!")?;
                 println!("Selected chain: {}", chain.join(", "));
+                // Encrypt the message for this chain + given headers
                 Ok(core.encrypt_message(&chain, &opts.headers,message.clone())?)
             })
             .enumerate()
             .map(|(index, res): (_, Fallible<Vec<u8>>)| -> Fallible<()> {
                 match res {
+                    // Case of valid message
                     Ok(msg) => {
+                        // Case of valid utf-8 message (it should because it is an arbored PGP message)
                         if let Ok(msg) = String::from_utf8(msg) {
+                            // Format the final message
                             let msg = format_msg(&opts.format, msg)?;
+
+                            // Write the formatted message into stdout or file
                             match opts.output.clone() {
+                                // Case of file output
                                 Some(mut path) => {
+                                    // Make the output file path
                                     path.push(
                                         format!(
                                             "redundancy_{}.{}",
@@ -185,22 +189,27 @@ fn main() {
                                         )
                                         .as_str(),
                                     );
+                                    // Write the message
                                     let mut file = File::create(path.clone())?;
                                     file.write_all(msg.as_bytes())?;
+                                    // Write the output path into stdout
                                     println!(
                                         "Encrypted message n°{} in {}",
                                         index + 1,
                                         path.to_string_lossy()
                                     )
                                 }
+                                // Case of stdout output - Just print the message
                                 None => println!("Encrypted message n°{}:\n{}", index + 1, msg),
                             }
                         } else {
+                            // Return error if the message is not utf-8 encoded
                             Err(err_msg(
                                 "Internal Error, encrypted message is not a valid utf-8 string.",
                             ))?;
                         }
                     }
+                    // Case of error during encryption
                     err => {
                         err.context(
                             format!(
@@ -213,26 +222,47 @@ fn main() {
                 }
                 Ok(())
             })
-            .collect::<Fallible<Vec<()>>>()?;
+            .collect::<Fallible<Vec<()>>>()?; // Collect all errors in one fallible
             Ok(())
-        })
+        }) // In all errors case, don't panic just print the errors
         .unwrap_or_else(print_errors);
 }
 
+/// Import remailers' key in the Cypherpunk core from a vec of remailer.
+/// It will only import enabled remailers.
+fn import_keys(core: &impl Cypherpunk, remailers: &Vec<Remailer>) -> Fallible<()> {
+    // Retrieve enabled remailers' keys
+    let keys: Vec<Vec<u8>> = remailers
+        .iter()
+        .filter_map(|remailer| match remailer.is_enabled() {
+            true => remailer.into_key().ok(),
+            false => None,
+        })
+        .collect();
+
+    // Import keys in the Cypherpunk Core
+    Ok(core.import_keys(keys)?)
+}
+
+/// Format a message for a particular OutputFormat, can fail.
 fn format_msg(format: &OutputFormat, msg: String) -> Fallible<String> {
     match format {
         &OutputFormat::Cypherpunk => Ok(msg),
         &OutputFormat::Mailto => Ok(format_mailto(msg)?),
         &OutputFormat::EML => Ok(format_eml(msg)?),
+        // In the future case of unimplemented format...
         other => Err(err_msg(
             format!("Format {:?} not yet implemented!", other).to_string(),
         )),
     }
 }
 
+/// Format a given message to an EML-formatted email
 fn format_eml(message: String) -> Fallible<String> {
+    // Get address and message body
     let (addr, message) = format_helper(message)?;
 
+    // Format it and return!
     Ok(format!(
         "MIME-Version: 1.0\n\
     Content-Type: text/plain; charset=utf-8\n\
@@ -244,49 +274,68 @@ fn format_eml(message: String) -> Fallible<String> {
     .to_string())
 }
 
+/// Format a given message to an mailto URL
 fn format_mailto(message: String) -> Fallible<String> {
+    // Get address and message body
     let (addr, message) = format_helper(message)?;
 
-    let body = utf8_percent_encode(message.as_str(), NON_ALPHANUMERIC).to_string(); // Encode message to UTF-8 Percent Encoding
+    // Encode body into utf-8 percent encode (to avoid special URL token)
+    let body = utf8_percent_encode(message.as_str(), NON_ALPHANUMERIC).to_string();
+    // Make it URL and return!
     Ok(format!("mailto:{}?body={}", addr, body).to_string())
 }
 
+/// Get from a given message, the message's recipient and the message's body
 fn format_helper(mut message: String) -> Fallible<(String, String)> {
+    // Find the `Anon-To` header
     let addr_start = message
-        .find(": ")
-        .ok_or(err_msg("Invalid Cypherpunk message"))?; // Find the address start
-    message.drain(..addr_start + 2); // Drop all chars before email address
+        .find("Anon-To: ")
+        .ok_or(err_msg("Invalid Cypherpunk message (Anon-To header missing)"))?; // Find the address start
+    message.drain(..addr_start + 9); // Drop all chars before email address
     let addr_end = message
-        .find("\n\n")
-        .ok_or(err_msg("Invalid Cypherpunk message"))?; // Find the address end
+        .find("\n")
+        .ok_or(err_msg("Invalid Cypherpunk message (Anon-To header is the only line in message)"))?; // Find the address end
     let addr: String = message.drain(..addr_end).collect(); // Save the email address in the var, and drop all chars before message
-    message.drain(..1);
+    // Look for a body (always separated by two line return to the headers)
+    let body_start = message.find("\n\n").ok_or(err_msg("Invalid Cypherpunk message (Body not found)"))? + 2;
+    message.drain(..body_start); // Drop all the char before the body
+    // Return the recipient address and the remaining message
     Ok((addr, message))
 }
 
+/// Retrieve from path given the remailer config (using serde-json)
 fn load_config<P: AsRef<Path>>(path: P) -> Fallible<RemailerConfig> {
     Ok(serde_json::from_reader(File::open(path)?)?)
 }
 
+/// Make a chain of remailers with the given "user-defined" chain
 fn make_chain(
     chain: &Vec<String>,
     remmap: &HashMap<String, String>,
     rng: &mut ThreadRng,
 ) -> Fallible<Vec<String>> {
+    // New chain holder
     let mut rchain = Vec::new();
+    // For all remailers in the actual chain:
     for rem in chain {
+        // Case of "randomly chosen" remailer
         if rem == "*" {
+            // Return one remailer address from the map
             match remmap.values().choose(rng) {
                 Some(email) => rchain.push(email.clone()),
                 None => Err(err_msg("Can't choose a remailer randomly..."))?,
             }
+        // Case of a named remailer
         } else {
+            // If the remailer name is known in the map, we add it in the chain, otherwise we ignore
+            // it and print a message in the stderr
             match remmap.get(rem) {
                 Some(email) => rchain.push(email.clone()),
                 None => eprintln!("Ignored remailer `{}` in the chain!", rem),
             }
         }
     }
+    // If the produced chain is empty, we make an error!
     if rchain.is_empty() {
         eprintln!("No chain selected, the program will exit...");
         println!("usage: To select a remailer chain, use `-c <remailer>`");
@@ -295,6 +344,7 @@ fn make_chain(
     Ok(rchain)
 }
 
+/// Print error, causes and backtrace from an error.
 fn print_errors(err: FError) {
     println!();
     eprintln!("Error occured: {}\n\ncauses:", err);
@@ -306,6 +356,7 @@ fn print_errors(err: FError) {
     }
 }
 
+/// A representation for the JSON config needed.
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug, Default)]
 struct RemailerConfig {
     version: String,
@@ -313,6 +364,7 @@ struct RemailerConfig {
     remailers: Vec<Remailer>,
 }
 
+/// A representation for a remailer value in the JSON config needed
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug, Default)]
 struct Remailer {
     name: Vec<String>,
@@ -322,10 +374,12 @@ struct Remailer {
 }
 
 impl Remailer {
+    /// Return if this remailer is enable in the config
     fn is_enabled(&self) -> bool {
         self.enable
     }
 
+    /// Return and decode the key of this remailer
     fn into_key(&self) -> Fallible<Vec<u8>> {
         Ok(base64::decode(self.key.split_at(7).1).context(format!(
             "Can't decode the base64-encoded key `{}`!",
@@ -334,13 +388,17 @@ impl Remailer {
     }
 }
 
+/// Make a map of name-to-remailer from a list of remailers
 fn remailer_map(remailers: Vec<Remailer>) -> HashMap<String, String> {
     let mut map = HashMap::new();
     if remailers.is_empty() {
         eprintln!("Without any remailer, the program will panic soon...")
     }
+    // For each remailers
     for remailer in remailers {
+        // We check if it is enabled
         if remailer.enable {
+            // For each alias and email of this remailer, we add it to the map
             map.insert(remailer.email.clone(), remailer.email.clone());
             for alias in remailer.name {
                 map.insert(alias, remailer.email.clone());
