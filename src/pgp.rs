@@ -144,7 +144,7 @@ pub mod gpg {
                 Command::new("cmd")
                     .arg("/C")
                     .arg(format!(
-                        r#"gpg --no-default-keyring --keyring={} -R "{}" -a -o {} {} --always-trust -e {}"#,
+                        r#"gpg --no-default-keyring --keyring={} -r "{}" -a -o {} {} --always-trust -e {}"#,
                         keyring.to_string_lossy(),
                         recipients,
                         out_path.to_string_lossy(),
@@ -157,7 +157,7 @@ pub mod gpg {
                 Command::new("sh")
                     .arg("-c")
                     .arg(format!(
-                        r#"gpg --no-default-keyring --keyring={} -R "{}" -a -o {} {} --always-trust -e {}"#,
+                        r#"gpg --no-default-keyring --keyring={} -r "{}" -a -o {} {} --always-trust -e {}"#,
                         keyring.to_string_lossy(),
                         recipients,
                         out_path.to_string_lossy(),

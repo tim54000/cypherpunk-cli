@@ -11,7 +11,7 @@ pub trait Cypherpunk {
     fn encrypt_message(
         &self,
         chain: &[String],
-        headers: &[String],
+        addheaders: &[String],
         message: Vec<u8>,
     ) -> Fallible<Vec<u8>>;
 }
@@ -59,7 +59,7 @@ impl<P: PGPBackend> Cypherpunk for CypherpunkCore<P> {
     fn encrypt_message(
         &self,
         chain: &[String],
-        headers: &[String],
+        addheaders: &[String],
         message: Vec<u8>,
     ) -> Fallible<Vec<u8>> {
         // Encrypt the message throught the remailer chain
@@ -68,11 +68,11 @@ impl<P: PGPBackend> Cypherpunk for CypherpunkCore<P> {
             let mut readin = Cursor::new(input?);
             let mut writeout: Cursor<Vec<u8>> = Cursor::new(Vec::new());
             let recipients = vec![remailer.clone()];
-            let addheaders: String = headers.join("\n");
+            let headers = [addheaders, &[format!("Anon-To: {}", remailer)]].concat().join("\n");
             // Make the wrapper message to which add the encrypted body
             let message = format!(
-                "\n::\nAnon-To: {}\n{}\n\n::\nEncrypted: PGP\n\n",
-                remailer, addheaders
+                "::\n{}\n\n::\nEncrypted: PGP\n\n",
+                headers
             );
 
             // Encrypt the message for the remailer
@@ -94,3 +94,4 @@ impl<P: PGPBackend> Cypherpunk for CypherpunkCore<P> {
         })
     }
 }
+
